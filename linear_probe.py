@@ -4,10 +4,16 @@
   python linear_probe.py --img_dir PATH/TO/IMAGES --models efficientnet_b0 efficientnet_b2 resnet50
 
 Features are extracted once per model (cached in features/) and the linear head is fit
-on the train part of the shared split, then scored on the val part. Test sets are never used.
+on the train part of the shared split, then scored on the val part.
 Output: probe_results.csv. Pick the smallest model in each family where the gains flatten out.
+
+  python linear_probe.py --img_dir PATH/TO/IMAGES --models resnet50 --save_runs runs/frozen
+
+--save_runs also scores the seen/unseen test sets and writes one run folder per model and task in the
+same format as train.py (results.json, probs_*.npy): a "frozen ImageNet weights" baseline that
+combine.py and evaluation.ipynb can read.
 """
-import argparse, time
+import argparse, hashlib, json, time
 from pathlib import Path
 import numpy as np, pandas as pd, torch, torch.nn as nn, torch.nn.functional as F
 from PIL import Image
@@ -55,18 +61,21 @@ def extract(model, tf, files, img_dir, bs, workers, dev):
     return torch.cat(out).numpy()
 
 
-def fit_probe(Xtr, ytr, Xva, yva, ncls, dev, steps=300, lr=1e-2, wd=1e-4):
-    Xtr, Xva = torch.tensor(Xtr), torch.tensor(Xva)
+def fit_probe(Xtr, ytr, evals, ncls, dev, steps=300, lr=1e-2, wd=1e-4):
+    """Fit a linear head on Xtr; return softmax probabilities for each feature matrix in `evals`."""
+    Xtr = torch.tensor(Xtr)
     mu, sd = Xtr.mean(0), Xtr.std(0) + 1e-6
-    Xtr, Xva = ((Xtr - mu) / sd).to(dev), ((Xva - mu) / sd).to(dev)
-    ytr, yva = torch.tensor(ytr).to(dev), torch.tensor(yva).to(dev)
+    Xtr, ytr = ((Xtr - mu) / sd).to(dev), torch.tensor(ytr).to(dev)
     lin = nn.Linear(Xtr.shape[1], ncls).to(dev)
     opt = torch.optim.Adam(lin.parameters(), lr=lr, weight_decay=wd)
     for _ in range(steps):
         opt.zero_grad(); F.cross_entropy(lin(Xtr), ytr).backward(); opt.step()
     with torch.no_grad():
-        top = lin(Xva).topk(5, 1).indices
-    return (top[:, 0] == yva).float().mean().item(), (top == yva[:, None]).any(1).float().mean().item()
+        return {k: lin(((torch.tensor(X) - mu) / sd).to(dev)).softmax(1).cpu().numpy() for k, X in evals.items()}
+
+
+def topk(P, y, k):
+    return float((np.argsort(-P, 1)[:, :k] == y[:, None]).any(1).mean())
 
 
 def main():
@@ -77,10 +86,16 @@ def main():
     a.add_argument("--bs", type=int, default=64)
     a.add_argument("--workers", type=int, default=4)
     a.add_argument("--out", default="probe_results.csv")
+    a.add_argument("--seen_csv", default="DPD_Small_test_seen.csv")
+    a.add_argument("--unseen_csv", default="DPD_Small_test_unseen.csv")
+    a.add_argument("--save_runs", default=None, help="also score the test sets and save run folders here")
     a = a.parse_args()
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     tr, va = split_train_val(read_csv(a.train_csv))
+    sets = {"train": tr, "val": va}
+    if a.save_runs:
+        sets.update(seen=read_csv(a.seen_csv), unseen=read_csv(a.unseen_csv))
     Path("features").mkdir(exist_ok=True)
     rows = []
     for name in a.models:
@@ -91,8 +106,10 @@ def main():
             torch.cuda.reset_peak_memory_stats()
         t0 = time.time()
         feats = {}
-        for split, df in [("train", tr), ("val", va)]:
-            cache = Path("features") / f"{name}_{split}.npy"
+        for split, df in sets.items():
+            # cache key includes a hash of the file list, so a changed split never reuses stale features
+            h = hashlib.md5("\n".join(df["file"]).encode()).hexdigest()[:8]
+            cache = Path("features") / f"{name}_{split}_{h}.npy"
             if cache.exists():
                 feats[split] = np.load(cache)
             else:
@@ -102,8 +119,20 @@ def main():
         row = {"model": name, "params_M": round(nparams, 1), "feat_dim": feats["train"].shape[1],
                "extract_s": round(secs), "peak_gpu_GB": round(torch.cuda.max_memory_allocated() / 1e9, 2) if dev == "cuda" else None}
         for task in ("crop", "disease"):
-            t1, t5 = fit_probe(feats["train"], tr[task].values, feats["val"], va[task].values, NCLS[task], dev)
-            row[f"{task}_top1"], row[f"{task}_top5"] = round(t1, 4), round(t5, 4)
+            P = fit_probe(feats["train"], tr[task].values, {k: v for k, v in feats.items() if k != "train"},
+                          NCLS[task], dev)
+            row[f"{task}_top1"], row[f"{task}_top5"] = (round(topk(P["val"], va[task].values, k), 4) for k in (1, 5))
+            if a.save_runs:
+                run = Path(a.save_runs) / f"{task}_{name}_frozen"
+                run.mkdir(parents=True, exist_ok=True)
+                res = {"args": {"task": task, "backbone": name, "method": "frozen", "lr": 1e-2, "bs": len(tr),
+                                "epochs": 300, "aug": "none", "freeze_epochs": -1},
+                       "params_M": round(nparams, 1), "best_val_top1": row[f"{task}_top1"], "history": []}
+                for split in ("seen", "unseen"):
+                    np.save(run / f"probs_{split}.npy", P[split])
+                    y = sets[split][task].values
+                    res[f"{split}_top1"], res[f"{split}_top5"] = topk(P[split], y, 1), topk(P[split], y, 5)
+                json.dump(res, open(run / "results.json", "w"), indent=2)
         print(row)
         rows.append(row)
         del model

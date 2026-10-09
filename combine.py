@@ -13,7 +13,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix
-from common import read_csv
+from common import read_csv, candidate_comps, comp_scores
 
 a = argparse.ArgumentParser()
 a.add_argument("--crop_run", required=True)
@@ -25,15 +25,14 @@ a.add_argument("--out", default="combined")
 a = a.parse_args()
 
 tr, se, un = read_csv(a.train_csv), read_csv(a.seen_csv), read_csv(a.unseen_csv)
-allc = pd.concat([tr, se, un])[["crop", "disease", "comp"]].drop_duplicates("comp").sort_values("comp")
-comp_ids, crop_idx, dis_idx = allc["comp"].values, allc["crop"].values, allc["disease"].values
-print(f"{len(allc)} candidate compositions")
+comp_ids, crop_idx, dis_idx = candidate_comps(tr, se, un)
+print(f"{len(comp_ids)} candidate compositions")
 
 
 def scores(split):
     pc = np.load(Path(a.crop_run) / f"probs_{split}.npy")
     pdis = np.load(Path(a.disease_run) / f"probs_{split}.npy")
-    return np.log(pc[:, crop_idx] + 1e-9) + np.log(pdis[:, dis_idx] + 1e-9)
+    return comp_scores(pc, pdis, crop_idx, dis_idx)
 
 
 def topk(S, y, k):

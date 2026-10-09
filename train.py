@@ -136,13 +136,15 @@ def main():
         P, Y = predict(model, dl_va, dev, amp)
         v1 = topk(P, Y, 1)
         hist.append({"epoch": ep, "train_loss": round(tot / n, 4), "val_top1": round(v1, 4),
-                     "val_top5": round(topk(P, Y, 5), 4)})
+                     "val_top5": round(topk(P, Y, 5), 4), "sec": round(time.time() - t0)})
         print(hist[-1], f"{time.time() - t0:.0f}s")
         if v1 > best:
             best = v1; torch.save(model.state_dict(), run / "best.pt")
 
     model.load_state_dict(torch.load(run / "best.pt", map_location=dev))
-    res = {"args": vars(a), "img_size": size, "best_val_top1": best}
+    res = {"args": vars(a), "img_size": size, "best_val_top1": best,
+           "params_M": round(sum(p.numel() for p in model.parameters()) / 1e6, 1),
+           "peak_gpu_GB": round(torch.cuda.max_memory_allocated() / 1e9, 2) if amp else None}
     for name, dl in [("seen", dl_seen), ("unseen", dl_unseen)]:
         P, Y = predict(model, dl, dev, amp)
         np.save(run / f"probs_{name}.npy", P)

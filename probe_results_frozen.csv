@@ -1,0 +1,5 @@
+model,params_M,feat_dim,extract_s,peak_gpu_GB,crop_top1,crop_top5,disease_top1,disease_top5
+efficientnet_b0,5.3,1280,120,0.39,0.92,0.985,0.7292,0.9325
+resnet50,25.6,2048,113,0.49,0.9167,0.9833,0.7033,0.9167
+convnext_tiny,28.6,768,103,0.63,0.9583,0.9925,0.77,0.95
+efficientnet_b3,12.2,1536,119,1.03,0.9433,0.9925,0.7358,0.9308

@@ -43,6 +43,9 @@ for col in ["crop", "disease", "comp"]:
 trn, val = split_train_val(tr)
 print(f"\nshared split: train={len(trn)} val={len(val)}")
 print("diseases with no image in the split's train part:", sorted(set(range(175)) - set(trn.disease)) or "none")
+print("crops with no image in the split's train part:   ", sorted(set(range(55)) - set(trn.crop)) or "none")
+val.to_csv("split_val.csv", header=False, index=False)
+print("val file list written to split_val.csv (same format as the other CSVs)")
 
 dup = set(tr.file) & (set(se.file) | set(un.file))
 print("files shared between train and test:", len(dup))
