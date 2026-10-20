@@ -1,10 +1,10 @@
 # Train crop + disease models for each backbone and seed, combine them, then score everything with evaluate.py.
 # Resumable: runs that already have results.json are skipped.
 #   powershell -ExecutionPolicy Bypass -File run_all.ps1
-#   powershell -ExecutionPolicy Bypass -File run_all.ps1 -Backbones "efficientnet_b0,resnet50" -Seeds "123,2026"
+#   powershell -ExecutionPolicy Bypass -File run_all.ps1 -Seeds "123,2026"      # seed 42 already done
 # Watch progress from another terminal:  Get-Content train_queue_log.txt -Wait -Tail 20
 param(
-    [string]$Backbones = "efficientnet_b0,resnet50,convnext_tiny,efficientnet_b3",
+    [string]$Backbones = "resnet50,convnext_tiny,efficientnet_b3",
     [string]$Seeds = "42,123,2026"
 )
 Set-Location $PSScriptRoot
