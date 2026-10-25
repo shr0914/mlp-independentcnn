@@ -48,3 +48,14 @@ per-unseen-composition accuracy, crop bias of the disease model, accuracy vs cla
 ## Validation split
 6800 train / 1200 val, stratified by composition (seed 42), shared by every script.
 `python check_labels.py` writes the val file list to `split_val.csv` to compare with other team members' splits.
+
+## Multitask comparison (shared protocol)
+`train_multitask.py` (one shared backbone, crop + disease heads) uses the same split, preprocessing, optimizer,
+schedule and defaults as `train.py`. The only intended differences are the 0.4/0.6 loss weights and that the
+checkpoint is chosen by validation composition Top-1 (the independent runs choose by each task's own val Top-1).
+`evaluate.py` scores both under one protocol (closed + open world Top-1/Top-5, harmonic means, bootstrap CIs,
+seen-test confusion matrices, per-unseen-pair accuracy):
+```
+python evaluate.py --ind_dir runs/main --mt_dir runs/multitask
+```
+Run each method with the same seeds (`run_all.ps1 -Seeds "42,123,2026"`) so mean ± SD is comparable.
